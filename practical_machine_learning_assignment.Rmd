@@ -1,0 +1,104 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Dawid Dąbkowski"
+date: "27 october 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=F, message=F)
+```
+
+## Load packages and data
+
+```{r}
+set.seed(2710)
+library(caret)
+training <- read.csv(file="pml-training.csv")
+testing <- read.csv(file="pml-testing.csv")
+```
+
+## Prepare the data
+
+Before we start analysis we need to make some assumptions. We will fit the model in a way that it should work well on the training set we are provided. We won't try to generalise it for the unknown data. So we will throw away any variables that are missing in any of sets or have different factor levels. We leave `user_name` variable in model as it might be helpful (but it would be bad idea for generalization purpouse are there should be no link between name and performance).
+
+```{r}
+n <- dim(training)[1]
+m <- dim(training)[2]
+goodvars_train <- colSums(!is.na(training))>0.1*n
+goodvars_test <- colSums(!is.na(testing))>2
+goodvars <- as.logical(goodvars_train*goodvars_test)
+goodvars[which(colnames(training)=="X")] <- FALSE
+goodvars[which(colnames(training)=="new_window")] <- FALSE
+goodvars[which(colnames(training)=="cvtd_timestamp")] <- FALSE
+```
+
+I also make another validation set just to make sure that model is not overfitted before building the final one.
+
+```{r}
+inTrain <- createDataPartition(training$classe, p=0.8, list = F)
+training_source <- training[goodvars]
+training <- training_source[inTrain,]
+validating <- training_source[-c(inTrain),]
+testing <- testing[goodvars]
+```
+
+
+```{r, eval=F, include=F}
+#For the prediction we also need columns of the same type in both training and testing set. We will ensure this with a simple loop calculation.
+for(i in 1:m){
+    if(class(training[,j]=="factor"))
+        if(length(levels(training[,j])>5))
+}
+for(j in 1:m){
+    if(class(testing[,j])=="logical")
+        testing[,j] <- as.factor(testing[,j])
+}
+```
+
+Last thing that we did was to check whether factor variables have relatively low number of levels and whether numerics can't be easily splitted into factors. It turns out that the rest of data is good quality so we can step into building our model.
+
+## Building the model
+
+We will use a tree-based `xgboost` model within a `caret` package to predict a discrete variable `classe`. We will use a 3-fold cross validation with a parameter grid to tune `nrounds` and `eta` parameters.
+
+```{r}
+grid <- expand.grid(nrounds = c(10,50,200,800),
+                    max_depth = 5,
+                    eta = c(0.05, 0.1),
+                    gamma = 1,
+                    colsample_bytree = 0.5,
+                    min_child_weight = 5,
+                    subsample = 0.5)
+fit1 <- train(classe~., data=training, method="xgbTree", 
+              trControl = trainControl(method = "cv", number = 3),
+              tuneGrid = grid)
+```
+
+Now we can look at the results to see how well is our model performing on a cross-validation set. Then we will look at a performance on our validation set.
+
+```{r}
+fit1$results
+pred <- predict(fit1, newdata=validating)
+confusionMatrix(pred, validating$classe)
+```
+
+## Final model
+
+Our model performs very accurately and doesn't seem to be overfitting. So we will choose the best parameters and train model on the whole sample. If the testing set is simillar to the training one then it should work very well.
+
+```{r}
+gc()
+rm(grid, inTrain, training, validating, fit1, goodvars, goodvars_test, goodvars_train, m, n, pred)
+grid2 <- expand.grid(nrounds = 800,
+                    max_depth = 5,
+                    eta = 0.1,
+                    gamma = 1,
+                    colsample_bytree = 0.5,
+                    min_child_weight = 5,
+                    subsample = 0.5)
+fit2 <- train(classe~., data=training_source, method="xgbTree", 
+              trControl = trainControl(method = "none"), tuneGrid = grid2)
+pred2 <- predict(fit2, newdata=testing)
+pred2
+```
